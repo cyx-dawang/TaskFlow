@@ -1,0 +1,10 @@
+services:
+  taskflow-api:
+    image: node:18-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "3000:3000"
+    # 新增了 socket.io 安装
+    command: sh -c "npm install express sqlite3 cors socket.io && node server.js"

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>TaskFlow V5.0 - 实时协同完全体</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root { --bg-color: #f4f5f7; --text-color: #333; --card-bg: #fff; --column-bg: #ebecf0; --border-color: #dfe1e6; --primary: #0052cc; }
+        body.dark-mode { --bg-color: #1a1d21; --text-color: #d7dbce; --card-bg: #2c333a; --column-bg: #22272b; --border-color: #3f474e; --primary: #4c9aff; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; transition: background 0.3s; overflow-x: hidden; }
+        
+        .header { background: var(--card-bg); padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border-color); }
+        .saas-status { display: flex; align-items: center; gap: 15px; font-weight: bold; font-size: 14px; }
+        .badge-free { background: #dfe1e6; color: #42526e; padding: 4px 10px; border-radius: 12px; }
+        .badge-pro { background: #fffae6; color: #ff8b00; padding: 4px 10px; border-radius: 12px; border: 1px solid #ff8b00; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        select, button { padding: 8px 12px; border-radius: 5px; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color); font-weight: bold; cursor: pointer; }
+        .btn-primary { background: var(--primary); color: white; border: none; }
+        .btn-primary:hover { opacity: 0.9; }
+        
+        .view-section { display: none; animation: fadeIn 0.3s; }
+        .view-section.active { display: flex; gap: 20px; transition: margin-right 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .column { background: var(--column-bg); flex: 1; border-radius: 8px; padding: 15px; min-height: 500px; display: flex; flex-direction: column; gap: 15px; }
+        .column h3 { margin: 0 0 10px 0; border-bottom: 2px solid var(--border-color); padding-bottom: 10px; display: flex; justify-content: space-between;}
+        .task { background: var(--card-bg); border-radius: 6px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid var(--primary); position: relative; }
+        .task-title { font-weight: bold; font-size: 14px; margin-bottom: 10px; padding-right: 20px; }
+        .task-meta { display: inline-block; background: rgba(0, 82, 204, 0.1); color: var(--primary); padding: 3px 8px; border-radius: 12px; font-size: 12px; }
+        .draggable { cursor: grab; }
+        .draggable:active { cursor: grabbing; }
+        .btn-delete { position: absolute; right: 10px; top: 12px; background: none; border: none; color: #ff5630; cursor: pointer; display: none; }
+
+        .list-container { width: 100%; background: var(--card-bg); border-radius: 8px; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 12px; border-bottom: 1px solid var(--border-color); }
+        .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .s-todo { background: #dfe1e6; color: #42526e; } .s-inprogress { background: #deebff; color: #0052cc; } .s-done { background: #e3fcef; color: #006644; }
+        .dashboard-container { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .chart-card { background: var(--card-bg); padding: 20px; border-radius: 8px; }
+
+        .drawer { position: fixed; top: 0; right: -350px; width: 300px; height: 100vh; background: var(--card-bg); box-shadow: -2px 0 10px rgba(0,0,0,0.1); transition: right 0.3s ease; padding: 20px; z-index: 1000; overflow-y: auto; border-left: 1px solid var(--border-color);}
+        .drawer.open { right: 0; }
+        .log-item { padding: 10px 0; border-bottom: 1px dashed var(--border-color); font-size: 13px; }
+        .log-time { color: #888; font-size: 11px; margin-bottom: 3px; }
+
+        .toast { position: fixed; bottom: 20px; right: -300px; background: #006644; color: white; padding: 12px 20px; border-radius: 5px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); transition: right 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); z-index: 9999; font-weight: bold; font-size: 14px; }
+        .toast.show { right: 20px; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0, 0.7); z-index: 2000; justify-content: center; align-items: center; }
+        .paywall { background: white; padding: 40px; border-radius: 12px; width: 600px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.2); position: relative;}
+        .close-modal { position: absolute; top: 15px; right: 20px; background: none; border: none; font-size: 24px; cursor: pointer; color: #666; }
+        .btn-upgrade { background: #0052cc; color: white; border: none; padding: 12px; width: 100%; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="saas-status">
+            <span id="teamPlanBadge" class="badge-free">基础版 (免费)</span>
+            <span id="teamCount">团队人数: 加载中...</span>
+            <button onclick="inviteMember()">➕ 邀请</button>
+        </div>
+        
+        <div class="controls">
+            <label style="font-size: 12px; font-weight: bold; color: var(--primary);">🟢 Socket 已连接</label>
+            <input type="text" id="currentUser" value="张三" placeholder="你的名字" style="width: 80px; padding: 6px; border-radius: 4px; border: 1px solid #ccc; font-weight: bold; text-align: center;">
+            <button onclick="toggleDarkMode()">🌙</button>
+            <button onclick="toggleLogs()">🔔 动态</button>
+            <select id="viewSelector" onchange="switchView()">
+                <option value="kanban">📋 看板</option>
+                <option value="list">🗂️ 列表</option>
+                <option value="dashboard">📊 报表</option>
+            </select>
+            <select id="roleSelector" onchange="applyPermissions()">
+                <option value="manager">项目经理</option>
+                <option value="developer">开发人员</option>
+            </select>
+            <button class="btn-primary" id="addBtn" onclick="addTask()">➕ 新建任务</button>
+        </div>
+    </div>
+
+    <div id="kanbanView" class="view-section active">
+        <div class="column" id="todo" ondrop="drop(event)" ondragover="allowDrop(event)"><h3>📋 待办 <span id="c-todo" class="task-meta">0</span></h3></div>
+        <div class="column" id="inprogress" ondrop="drop(event)" ondragover="allowDrop(event)"><h3>💻 进行中 <span id="c-inprogress" class="task-meta">0</span></h3></div>
+        <div class="column" id="done" ondrop="drop(event)" ondragover="allowDrop(event)"><h3>✅ 已完成 <span id="c-done" class="task-meta">0</span></h3></div>
+    </div>
+
+    <div id="listView" class="view-section"><div class="list-container"><table><tbody id="listBody"></tbody></table></div></div>
+    <div id="dashboardView" class="view-section"><div class="dashboard-container"><div class="chart-card"><canvas id="statusChart"></canvas></div><div class="chart-card"><canvas id="workloadChart"></canvas></div></div></div>
+
+    <div class="drawer" id="logDrawer">
+        <h2 style="margin-top:0; border-bottom: 2px solid var(--border-color); padding-bottom: 10px;">🕒 项目审计日志</h2>
+        <div id="logContent"></div>
+    </div>
+
+    <div class="toast" id="toastBox">系统消息</div>
+
+    <div class="modal-overlay" id="paywallModal">
+        <div class="paywall">
+            <button class="close-modal" onclick="document.getElementById('paywallModal').style.display='none'">×</button>
+            <h1 style="color:#172b4d">升级专业版 🚀</h1>
+            <p style="color:#666">请使用微信扫码支付 <strong>¥19.00</strong>。付款后填写您的微信昵称或单号，管理员将为您实时开通。</p>
+            
+            <div style="background: #f4f5f7; padding: 20px; border-radius: 8px; margin: 20px 0; display: flex; align-items: center; gap: 20px; text-align: left;">
+                <img src="./qrcode.png" alt="收款码" style="width: 150px; height: 150px; border-radius: 8px; border: 2px solid #dfe1e6; object-fit: cover;">
+                <div style="flex: 1;">
+                    <label style="display: block; font-weight: bold; margin-bottom: 8px; color: #333;">付款人微信号 / 交易单号：</label>
+                    <input type="text" id="paymentRef" placeholder="例如：张三 或 单号后四位" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 15px; box-sizing: border-box;">
+                    <button class="btn-upgrade" onclick="submitPayment()" id="submitPayBtn">我已付款，提交审核</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/api';
+        const socket = io();
+        let globalTasks = [];
+        let charts = {};
+
+        socket.on('system_update', (msg) => {
+            showToast(msg); 
+            loadTasks();    
+            loadLogs();     
+            loadTeamStatus(); // 同步刷新付费墙状态
+        });
+
+        window.onload = () => { loadTasks(); loadTeamStatus(); loadLogs(); };
+
+        function showToast(msg) {
+            const toast = document.getElementById('toastBox');
+            toast.innerText = '⚡ ' + msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        function toggleLogs() { 
+            const drawer = document.getElementById('logDrawer');
+            drawer.classList.toggle('open');
+            document.querySelectorAll('.view-section').forEach(el => {
+                el.style.marginRight = drawer.classList.contains('open') ? '320px' : '0';
+            });
+        }
+
+        function loadLogs() {
+            fetch(`${API_URL}/logs`).then(res => res.json()).then(logs => {
+                const box = document.getElementById('logContent');
+                box.innerHTML = '';
+                logs.forEach(log => {
+                    box.innerHTML += `<div class="log-item"><div class="log-time">${log.local_time}</div><div>${log.action}</div></div>`;
+                });
+            });
+        }
+
+        function loadTasks() {
+            fetch(`${API_URL}/tasks`).then(res => res.json()).then(tasks => {
+                globalTasks = tasks;
+                renderKanban(); renderList(); if(document.getElementById('viewSelector').value === 'dashboard') renderDashboard();
+                applyPermissions(); 
+            });
+        }
+
+        function switchView() {
+            const view = document.getElementById('viewSelector').value;
+            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+            document.getElementById(view + 'View').classList.add('active');
+            if (view === 'dashboard') renderDashboard();
+        }
+        function toggleDarkMode() { document.body.classList.toggle('dark-mode'); }
+
+        function renderKanban() {
+            ['todo', 'inprogress', 'done'].forEach(id => {
+                const col = document.getElementById(id);
+                Array.from(col.children).forEach(child => { if(child.tagName !== 'H3') child.remove(); });
+                document.getElementById('c-' + id).innerText = globalTasks.filter(t => t.status === id).length;
+            });
+
+            globalTasks.forEach(task => {
+                let col = document.getElementById(task.status) || document.getElementById('todo');
+                let el = document.createElement('div');
+                el.className = 'task';
+                el.id = 'task-' + task.id;
+                el.setAttribute('data-title', task.title); 
+                el.innerHTML = `<button class="btn-delete" onclick="deleteTask(${task.id})">✖</button>
+                                <div class="task-title">${task.title}</div>
+                                <div class="task-meta">👤 ${task.assignee}</div>`;
+                el.ondragstart = drag;
+                col.appendChild(el);
+            });
+        }
+
+        function renderList() {
+            const tbody = document.getElementById('listBody');
+            tbody.innerHTML = '<tr><th>ID</th><th>标题</th><th>负责人</th><th>状态</th></tr>';
+            const sMap = { 'todo': ['待办', 's-todo'], 'inprogress': ['进行中', 's-inprogress'], 'done': ['已完成', 's-done'] };
+            globalTasks.forEach(t => {
+                const s = sMap[t.status];
+                tbody.innerHTML += `<tr><td>TASK-${t.id}</td><td>${t.title}</td><td>${t.assignee}</td><td><span class="status-badge ${s[1]}">${s[0]}</span></td></tr>`;
+            });
+        }
+
+        function renderDashboard() {
+            let sCounts = { todo: 0, inprogress: 0, done: 0 }; let workload = {};
+            globalTasks.forEach(t => { sCounts[t.status]++; if(t.status !== 'done') workload[t.assignee] = (workload[t.assignee] || 0) + 1; });
+            if(charts.status) charts.status.destroy(); if(charts.workload) charts.workload.destroy();
+            charts.status = new Chart(document.getElementById('statusChart').getContext('2d'), { type: 'doughnut', data: { labels: ['待办', '进行中', '已完成'], datasets: [{ data: [sCounts.todo, sCounts.inprogress, sCounts.done], backgroundColor: ['#dfe1e6', '#0052cc', '#006644'] }] }});
+            charts.workload = new Chart(document.getElementById('workloadChart').getContext('2d'), { type: 'bar', data: { labels: Object.keys(workload), datasets: [{ label: '未完成任务数', data: Object.values(workload), backgroundColor: '#4c9aff' }] }});
+        }
+
+        function applyPermissions() {
+            const role = document.getElementById('roleSelector').value;
+            const addBtn = document.getElementById('addBtn');
+            const tasks = document.querySelectorAll('.task');
+            const delBtns = document.querySelectorAll('.btn-delete');
+            if (role === 'manager') { addBtn.style.display = 'inline-block'; tasks.forEach(t => { t.draggable = true; t.classList.add('draggable'); }); delBtns.forEach(btn => btn.style.display = 'block'); } 
+            else { addBtn.style.display = 'none'; tasks.forEach(t => { t.draggable = true; t.classList.add('draggable'); }); delBtns.forEach(btn => btn.style.display = 'none'); }
+        }
+
+        function getUser() { return document.getElementById('currentUser').value || '匿名者'; }
+
+        function addTask() {
+            let title = prompt("请输入任务内容："); if (!title) return;
+            let assignee = prompt("请输入分配给谁：") || '待分配';
+            fetch(`${API_URL}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, assignee, operator: getUser() }) });
+        }
+
+        function deleteTask(id) {
+            if(confirm("确定删除吗？")) fetch(`${API_URL}/tasks/${id}`, { method: 'DELETE' });
+        }
+
+        function allowDrop(ev) { ev.preventDefault(); }
+        function drag(ev) { ev.dataTransfer.setData("text", ev.target.id); }
+        function drop(ev) {
+            ev.preventDefault();
+            var data = ev.dataTransfer.getData("text");
+            var taskEl = document.getElementById(data);
+            var taskTitle = taskEl.getAttribute('data-title');
+            var target = ev.target;
+            while (!target.classList.contains('column')) { target = target.parentElement; }
+            target.appendChild(taskEl);
+            
+            fetch(`${API_URL}/tasks/${data.split('-')[1]}`, { 
+                method: 'PUT', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ status: target.id, operator: getUser(), taskTitle: taskTitle }) 
+            });
+        }
+
+        function loadTeamStatus() {
+            fetch(`${API_URL}/team`).then(res => res.json()).then(t => {
+                const b = document.getElementById('teamPlanBadge');
+                if (t.plan === 'free') { 
+                    b.className = 'badge-free'; b.innerText = '基础版'; 
+                    document.getElementById('teamCount').innerText = `人数: ${t.users_count}/10`; 
+                } else { 
+                    b.className = 'badge-pro'; b.innerText = '👑 专业版'; 
+                    document.getElementById('teamCount').innerText = `人数: ${t.users_count} (无限制)`; 
+                    document.getElementById('paywallModal').style.display = 'none'; // 收到升级消息后自动关闭弹窗
+                }
+            });
+        }
+
+        function inviteMember() {
+            fetch(`${API_URL}/team/invite`, { method: 'POST' }).then(res => {
+                if (res.status === 403) { document.getElementById('paywallModal').style.display = 'flex'; throw new Error(); }
+                return res.json();
+            }).then(() => loadTeamStatus()).catch(()=>{});
+        }
+
+        // MVP 提交支付凭证
+        function submitPayment() {
+            const ref = document.getElementById('paymentRef').value;
+            if (!ref) return alert("请先填写付款微信号或单号！");
+            
+            const btn = document.getElementById('submitPayBtn');
+            btn.innerText = "提交中...";
+            btn.disabled = true;
+
+            fetch(`${API_URL}/team/submit_payment`, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reference: ref, user: getUser() })
+            }).then(() => {
+                btn.innerText = "审核中，请稍候...";
+                showToast("付款信息已提交，等待管理员审核...");
+            });
+        }
+
+        // 隐藏后门：管理员快捷键 (Ctrl + Shift + A) 一键审核通过
+        document.addEventListener('keydown', function(event) {
+            if (event.ctrlKey && event.shiftKey && event.key === 'A') {
+                if(confirm("【管理员后台】确定要通过最新的一笔支付申请吗？")) {
+                    fetch(`${API_URL}/team/upgrade`, { method: 'POST' });
+                }
+            }
+        });
+    </script>
+</body>
+</html>
